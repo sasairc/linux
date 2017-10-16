@@ -1,0 +1,3 @@
+[submodule "kernel-configs"]
+	path = kernel-configs
+	url = https://github.com/sasairc/linux-kernel-configs
