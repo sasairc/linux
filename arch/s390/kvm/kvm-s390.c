@@ -421,6 +421,9 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_S390_GS:
 		r = test_facility(133);
 		break;
+	case KVM_CAP_S390_BPB:
+		r = test_facility(82);
+		break;
 	default:
 		r = 0;
 	}
@@ -792,11 +795,12 @@ static int kvm_s390_vm_start_migration(struct kvm *kvm)
 
 	if (kvm->arch.use_cmma) {
 		/*
-		 * Get the last slot. They should be sorted by base_gfn, so the
-		 * last slot is also the one at the end of the address space.
-		 * We have verified above that at least one slot is present.
+		 * Get the first slot. They are reverse sorted by base_gfn, so
+		 * the first slot is also the one at the end of the address
+		 * space. We have verified above that at least one slot is
+		 * present.
 		 */
-		ms = slots->memslots + slots->used_slots - 1;
+		ms = slots->memslots;
 		/* round up so we only use full longs */
 		ram_pages = roundup(ms->base_gfn + ms->npages, BITS_PER_LONG);
 		/* allocate enough bytes to store all the bits */
@@ -2197,6 +2201,8 @@ int kvm_arch_vcpu_init(struct kvm_vcpu *vcpu)
 	kvm_s390_set_prefix(vcpu, 0);
 	if (test_kvm_facility(vcpu->kvm, 64))
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_RICCB;
+	if (test_kvm_facility(vcpu->kvm, 82))
+		vcpu->run->kvm_valid_regs |= KVM_SYNC_BPBC;
 	if (test_kvm_facility(vcpu->kvm, 133))
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_GSCB;
 	/* fprs can be synchronized via vrs, even if the guest has no vx. With
@@ -2338,6 +2344,7 @@ static void kvm_s390_vcpu_initial_reset(struct kvm_vcpu *vcpu)
 	current->thread.fpu.fpc = 0;
 	vcpu->arch.sie_block->gbea = 1;
 	vcpu->arch.sie_block->pp = 0;
+	vcpu->arch.sie_block->fpf &= ~FPF_BPBC;
 	vcpu->arch.pfault_token = KVM_S390_PFAULT_TOKEN_INVALID;
 	kvm_clear_async_pf_completion_queue(vcpu);
 	if (!kvm_s390_user_cpu_state_ctrl(vcpu->kvm))
@@ -3297,6 +3304,11 @@ static void sync_regs(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 		vcpu->arch.sie_block->ecd |= ECD_HOSTREGMGMT;
 		vcpu->arch.gs_enabled = 1;
 	}
+	if ((kvm_run->kvm_dirty_regs & KVM_SYNC_BPBC) &&
+	    test_kvm_facility(vcpu->kvm, 82)) {
+		vcpu->arch.sie_block->fpf &= ~FPF_BPBC;
+		vcpu->arch.sie_block->fpf |= kvm_run->s.regs.bpbc ? FPF_BPBC : 0;
+	}
 	save_access_regs(vcpu->arch.host_acrs);
 	restore_access_regs(vcpu->run->s.regs.acrs);
 	/* save host (userspace) fprs/vrs */
@@ -3343,6 +3355,7 @@ static void store_regs(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 	kvm_run->s.regs.pft = vcpu->arch.pfault_token;
 	kvm_run->s.regs.pfs = vcpu->arch.pfault_select;
 	kvm_run->s.regs.pfc = vcpu->arch.pfault_compare;
+	kvm_run->s.regs.bpbc = (vcpu->arch.sie_block->fpf & FPF_BPBC) == FPF_BPBC;
 	save_access_regs(vcpu->run->s.regs.acrs);
 	restore_access_regs(vcpu->arch.host_acrs);
 	/* Save guest register state */
