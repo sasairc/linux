@@ -36,13 +36,10 @@ struct linux_logo {
 extern const struct linux_logo logo_linux_mono;
 extern const struct linux_logo logo_linux_vga16;
 extern const struct linux_logo logo_linux_clut224;
-<<<<<<< HEAD
 extern const struct linux_logo logo_vim_clut224;
 extern const struct linux_logo logo_naxtu_clut224;
 extern const struct linux_logo logo_blackfin_vga16;
 extern const struct linux_logo logo_blackfin_clut224;
-=======
->>>>>>> upstream/master
 extern const struct linux_logo logo_dec_clut224;
 extern const struct linux_logo logo_mac_clut224;
 extern const struct linux_logo logo_parisc_clut224;
