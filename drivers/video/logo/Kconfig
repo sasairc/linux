@@ -27,6 +27,7 @@ config LOGO_LINUX_CLUT224
 	bool "Standard 224-color Linux logo"
 	default y
 
+<<<<<<< HEAD
 config LOGO_VIM_CLUT224
 	bool "224-color Vi IMproved (vim) logo"
 	default y
@@ -49,6 +50,8 @@ config LOGO_BLACKFIN_CLUT224
 	depends on BLACKFIN
 	default y
 
+=======
+>>>>>>> upstream/master
 config LOGO_DEC_CLUT224
 	bool "224-color Digital Equipment Corporation Linux logo"
 	depends on MACH_DECSTATION || ALPHA
@@ -87,11 +90,6 @@ config LOGO_SUPERH_VGA16
 config LOGO_SUPERH_CLUT224
 	bool "224-color SuperH Linux logo"
 	depends on SUPERH
-	default y
-
-config LOGO_M32R_CLUT224
-	bool "224-color M32R Linux logo"
-	depends on M32R
 	default y
 
 endif # LOGO

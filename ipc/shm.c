@@ -386,6 +386,17 @@ static int shm_fault(struct vm_fault *vmf)
 	return sfd->vm_ops->fault(vmf);
 }
 
+static int shm_split(struct vm_area_struct *vma, unsigned long addr)
+{
+	struct file *file = vma->vm_file;
+	struct shm_file_data *sfd = shm_file_data(file);
+
+	if (sfd->vm_ops && sfd->vm_ops->split)
+		return sfd->vm_ops->split(vma, addr);
+
+	return 0;
+}
+
 #ifdef CONFIG_NUMA
 static int shm_set_policy(struct vm_area_struct *vma, struct mempolicy *new)
 {
@@ -510,6 +521,7 @@ static const struct vm_operations_struct shm_vm_ops = {
 	.open	= shm_open,	/* callback for a new vm-area open */
 	.close	= shm_close,	/* callback for when the vm-area is released */
 	.fault	= shm_fault,
+	.split	= shm_split,
 #if defined(CONFIG_NUMA)
 	.set_policy = shm_set_policy,
 	.get_policy = shm_get_policy,
@@ -656,7 +668,7 @@ static inline int shm_more_checks(struct kern_ipc_perm *ipcp,
 	return 0;
 }
 
-SYSCALL_DEFINE3(shmget, key_t, key, size_t, size, int, shmflg)
+long ksys_shmget(key_t key, size_t size, int shmflg)
 {
 	struct ipc_namespace *ns;
 	static const struct ipc_ops shm_ops = {
@@ -673,6 +685,11 @@ SYSCALL_DEFINE3(shmget, key_t, key, size_t, size, int, shmflg)
 	shm_params.u.size = size;
 
 	return ipcget(ns, &shm_ids(ns), &shm_ops, &shm_params);
+}
+
+SYSCALL_DEFINE3(shmget, key_t, key, size_t, size, int, shmflg)
+{
+	return ksys_shmget(key, size, shmflg);
 }
 
 static inline unsigned long copy_shmid_to_user(void __user *buf, struct shmid64_ds *in, int version)
@@ -909,8 +926,10 @@ static int shmctl_stat(struct ipc_namespace *ns, int shmid,
 			int cmd, struct shmid64_ds *tbuf)
 {
 	struct shmid_kernel *shp;
-	int result;
+	int id = 0;
 	int err;
+
+	memset(tbuf, 0, sizeof(*tbuf));
 
 	rcu_read_lock();
 	if (cmd == SHM_STAT) {
@@ -919,14 +938,13 @@ static int shmctl_stat(struct ipc_namespace *ns, int shmid,
 			err = PTR_ERR(shp);
 			goto out_unlock;
 		}
-		result = shp->shm_perm.id;
+		id = shp->shm_perm.id;
 	} else {
 		shp = shm_obtain_object_check(ns, shmid);
 		if (IS_ERR(shp)) {
 			err = PTR_ERR(shp);
 			goto out_unlock;
 		}
-		result = 0;
 	}
 
 	err = -EACCES;
@@ -937,7 +955,14 @@ static int shmctl_stat(struct ipc_namespace *ns, int shmid,
 	if (err)
 		goto out_unlock;
 
-	memset(tbuf, 0, sizeof(*tbuf));
+	ipc_lock_object(&shp->shm_perm);
+
+	if (!ipc_valid_object(&shp->shm_perm)) {
+		ipc_unlock_object(&shp->shm_perm);
+		err = -EIDRM;
+		goto out_unlock;
+	}
+
 	kernel_to_ipc64_perm(&shp->shm_perm, &tbuf->shm_perm);
 	tbuf->shm_segsz	= shp->shm_segsz;
 	tbuf->shm_atime	= shp->shm_atim;
@@ -946,8 +971,10 @@ static int shmctl_stat(struct ipc_namespace *ns, int shmid,
 	tbuf->shm_cpid	= shp->shm_cprid;
 	tbuf->shm_lpid	= shp->shm_lprid;
 	tbuf->shm_nattch = shp->shm_nattch;
+
+	ipc_unlock_object(&shp->shm_perm);
 	rcu_read_unlock();
-	return result;
+	return id;
 
 out_unlock:
 	rcu_read_unlock();
@@ -1030,7 +1057,7 @@ out_unlock1:
 	return err;
 }
 
-SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, struct shmid_ds __user *, buf)
+long ksys_shmctl(int shmid, int cmd, struct shmid_ds __user *buf)
 {
 	int err, version;
 	struct ipc_namespace *ns;
@@ -1082,6 +1109,11 @@ SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, struct shmid_ds __user *, buf)
 	default:
 		return -EINVAL;
 	}
+}
+
+SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, struct shmid_ds __user *, buf)
+{
+	return ksys_shmctl(shmid, cmd, buf);
 }
 
 #ifdef CONFIG_COMPAT
@@ -1203,7 +1235,7 @@ static int copy_compat_shmid_from_user(struct shmid64_ds *out, void __user *buf,
 	}
 }
 
-COMPAT_SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, void __user *, uptr)
+long compat_ksys_shmctl(int shmid, int cmd, void __user *uptr)
 {
 	struct ipc_namespace *ns;
 	struct shmid64_ds sem64;
@@ -1257,6 +1289,11 @@ COMPAT_SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, void __user *, uptr)
 		return -EINVAL;
 	}
 	return err;
+}
+
+COMPAT_SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, void __user *, uptr)
+{
+	return compat_ksys_shmctl(shmid, cmd, uptr);
 }
 #endif
 
@@ -1466,7 +1503,7 @@ COMPAT_SYSCALL_DEFINE3(shmat, int, shmid, compat_uptr_t, shmaddr, int, shmflg)
  * detach and kill segment if marked destroyed.
  * The work is done in shm_close.
  */
-SYSCALL_DEFINE1(shmdt, char __user *, shmaddr)
+long ksys_shmdt(char __user *shmaddr)
 {
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
@@ -1571,6 +1608,11 @@ SYSCALL_DEFINE1(shmdt, char __user *, shmaddr)
 
 	up_write(&mm->mmap_sem);
 	return retval;
+}
+
+SYSCALL_DEFINE1(shmdt, char __user *, shmaddr)
+{
+	return ksys_shmdt(shmaddr);
 }
 
 #ifdef CONFIG_PROC_FS

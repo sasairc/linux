@@ -1799,7 +1799,7 @@ static int powerbook_sleep_grackle(void)
 	struct adb_request req;
 	struct pci_dev *grackle;
 
-	grackle = pci_get_bus_and_slot(0, 0);
+	grackle = pci_get_domain_bus_and_slot(0, 0, 0);
 	if (!grackle)
 		return -ENODEV;
 
@@ -2169,7 +2169,7 @@ pmu_fpoll(struct file *filp, poll_table *wait)
 	poll_wait(filp, &pp->wait, wait);
 	spin_lock_irqsave(&pp->lock, flags);
 	if (pp->rb_get != pp->rb_put)
-		mask |= POLLIN;
+		mask |= EPOLLIN;
 	spin_unlock_irqrestore(&pp->lock, flags);
 	return mask;
 }
